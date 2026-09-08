@@ -1,14 +1,5 @@
 {
-  "buildCommand": "npm run build",
-  "installCommand": "npm install",
-  "devCommand": "npm run dev",
-  "env": {
-    "MONGO_URI": "@mongo_uri",
-    "AWS_ACCESS_KEY_ID": "@aws_access_key_id",
-    "AWS_SECRET_ACCESS_KEY": "@aws_secret_access_key",
-    "AWS_S3_BUCKET_NAME": "@aws_s3_bucket_name",
-    "NEXT_PUBLIC_S3_BASE_URL": "@next_public_s3_base_url",
-    "RESEND_API_KEY": "@resend_api_key",
-    "EMAIL_FROM": "@email_from"
-  }
+    "buildCommand": "npm run build",
+    "installCommand": "npm install",
+    "outputDirectory": ".next"
 }
