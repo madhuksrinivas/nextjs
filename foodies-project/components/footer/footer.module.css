@@ -1,0 +1,16 @@
+.footer {
+  text-align: center;
+  padding: 1rem;
+  /* background-color: #f8f8f8; */
+  color: white;
+  font-size: 0.9rem;
+}
+
+.backLink {
+  display: inline-block;
+  padding: 0rem 2.5rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(90deg, #f9572a, #ff9b05);
+  color: #ffffff;
+  text-decoration: none;
+}

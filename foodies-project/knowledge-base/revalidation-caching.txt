@@ -1,0 +1,206 @@
+NEXT.JS REVALIDATION & CACHING
+===============================
+
+Next.js aggressively caches pages and data by default (especially in production builds).
+After mutating data (e.g. saving a meal), you must tell Next.js to re-fetch so the
+updated data appears — this is called revalidation.
+
+
+WHAT IS CACHING?
+----------------
+Caching means storing the result of an expensive operation (like a database query or
+page render) so it can be reused without repeating that operation.
+
+Next.js caches at multiple levels:
+  - The rendered HTML of a page (Full Route Cache)
+  - The result of fetch() calls (Data Cache)
+  - The router navigation history (Router Cache)
+
+When Next.js builds your app (npm run build), it pre-renders pages that don't need
+live data and saves the HTML to disk. When a user visits /meals, Next.js just serves
+that saved HTML — it does NOT re-query the database on every visit.
+
+This makes pages extremely fast, but it means new data (a newly added meal) won't
+appear until the cache is invalidated.
+
+
+WHY WE NEED REVALIDATION
+-------------------------
+Without revalidation:
+  1. User submits a new meal via the Share Meal form
+  2. The meal is saved to the database ✓
+  3. User is redirected to /meals
+  4. /meals still shows the OLD cached list ✗ — the new meal is invisible
+
+With revalidatePath("/meals"):
+  1. User submits a new meal
+  2. The meal is saved to the database ✓
+  3. Next.js is told: "throw away the cached /meals page"
+  4. User is redirected to /meals
+  5. Next.js re-renders /meals fresh from the database ✓ — new meal appears
+
+So revalidation is the bridge between a mutation (write) and the UI reflecting it.
+
+
+DEV vs PRODUCTION — HOW NEXT.JS BEHAVES DIFFERENTLY
+----------------------------------------------------
+This is one of the most confusing things about Next.js: it behaves completely
+differently in development vs production.
+
+DEVELOPMENT (npm run dev)
+  - Caching is effectively disabled for most things
+  - Every request re-renders the page from scratch
+  - Every request re-runs your database queries
+  - revalidatePath / revalidateTag have no real visible effect
+  - This is why everything "just works" in dev — you never notice stale data
+
+PRODUCTION (npm run build + npm start)
+  - Pages are pre-rendered and cached at build time
+  - Database queries run ONCE during build, results are frozen in cache
+  - Without revalidatePath after a mutation, /meals will never show new meals
+  - This is the only environment where caching and revalidation actually matter
+
+PRACTICAL CONSEQUENCE:
+  If you test your app only with npm run dev and it works fine, that does NOT mean
+  it will work correctly in production. Always verify mutations + revalidation with:
+
+    npm run build
+    npm start
+
+  Then submit a new meal and confirm it appears on /meals immediately.
+
+
+EXAMPLE: what "stale cache" looks like in production
+-----------------------------------------------------
+Step 1: npm run build
+  → Next.js queries DB, finds 6 meals, pre-renders /meals with those 6 meals
+  → HTML is cached to .next/server/app/meals/page.html
+
+Step 2: npm start
+  → Server starts, /meals is served from the pre-rendered HTML
+
+Step 3: User adds a 7th meal via the form
+  → Meal is inserted into MongoDB's `meals` collection ✓
+  → But .next/server/app/meals/page.html still has 6 meals
+
+Step 4: User visits /meals
+  WITHOUT revalidatePath → sees 6 meals (stale)
+  WITH revalidatePath("/meals") → cache is purged, page re-renders → sees 7 meals ✓
+
+
+THE PROBLEM
+-----------
+Without revalidation, after a user submits a new meal, the /meals page still shows
+the old cached list because Next.js pre-rendered and cached it at build time.
+
+
+TWO REVALIDATION FUNCTIONS
+---------------------------
+
+1. revalidatePath(path)
+   Purges the cache for a specific URL path.
+
+   import { revalidatePath } from "next/cache";
+
+   // After saving a meal, tell Next.js to re-render /meals
+   revalidatePath("/meals");
+
+   Use this when you know exactly which page(s) to invalidate.
+
+   Examples:
+     revalidatePath("/meals");          // just the meals list page
+     revalidatePath("/meals", "layout") // meals page + all nested pages under it
+     revalidatePath("/");               // home page only
+
+2. revalidateTag(tag)
+   Purges the cache for all fetch() calls tagged with a specific tag.
+
+   // When fetching data, add a tag:
+   fetch("https://api.example.com/meals", { next: { tags: ["meals"] } });
+
+   // Later, after a mutation:
+   import { revalidateTag } from "next/cache";
+   revalidateTag("meals"); // re-fetches all data tagged "meals"
+
+   Use this when the same data is used across many pages.
+
+
+WHERE TO CALL THEM
+------------------
+Always call revalidatePath / revalidateTag inside a Server Action, BEFORE redirect().
+
+export async function shareMeal(_, formData) {
+  // ... save data ...
+  revalidatePath("/meals");   // <-- invalidate cache BEFORE redirect
+  redirect("/meals");         // <-- then redirect
+}
+
+Calling redirect() throws internally in Next.js, so anything after it won't run.
+
+
+CACHING MODES
+-------------
+Next.js has different caching behaviors:
+
+- Static (SSG): Page is pre-rendered at build time. Cached until revalidated.
+- Dynamic: Page is rendered on every request (opt in with dynamic = 'force-dynamic').
+- ISR (Incremental Static Regeneration): Re-render after a time interval.
+
+  // In a page or layout component file:
+  export const revalidate = 60; // re-render this page at most every 60 seconds
+
+  // OR force fully dynamic (no caching):
+  export const dynamic = "force-dynamic";
+
+
+HOW revalidatePath WORKS IN THIS PROJECT
+-----------------------------------------
+In foodies-project/lib/action.js:
+
+  await saveMeal(mealData);      // writes to MongoDB + uploads the image to S3
+  revalidatePath("/meals");      // tells Next.js: next request to /meals must re-run
+  redirect("/meals");            // sends user back to the list
+
+Without revalidatePath("/meals"), the meals list page would show stale data
+even after a successful submission, because Next.js cached it at build time.
+
+
+REVALIDATEPATH SCOPE OPTIONS
+-----------------------------
+revalidatePath(path, type)
+
+  type = "page"   (default) — invalidates only that exact route
+  type = "layout" — invalidates that route AND all routes that share its layout
+
+  revalidatePath("/meals", "layout");
+  // Invalidates /meals, /meals/[slug], /meals/share, etc.
+
+  revalidatePath("/", "layout");
+  // Invalidates ALL pages (nuclear option — use sparingly)
+
+
+COMMON MISTAKES
+---------------
+1. Forgetting revalidatePath after a mutation
+   → Page shows stale data in production (works fine in dev because dev never caches)
+
+2. Calling revalidatePath after redirect()
+   → redirect() throws, so revalidatePath never runs. Always call it BEFORE redirect.
+
+3. Using revalidatePath in a client component
+   → Only works in Server Actions and Route Handlers. Not in client components.
+
+4. Assuming dev mode = production mode
+   → Next.js does NOT cache in development. Always test caching behavior after
+     npm run build && npm start.
+
+
+QUICK REFERENCE
+---------------
+| Goal                              | Solution                              |
+|-----------------------------------|---------------------------------------|
+| Refresh one page after mutation   | revalidatePath("/path")               |
+| Refresh page + nested routes      | revalidatePath("/path", "layout")     |
+| Refresh data used on many pages   | revalidateTag("tag-name")             |
+| Always render fresh (no cache)    | export const dynamic = "force-dynamic"|
+| Refresh on a time interval        | export const revalidate = 60          |

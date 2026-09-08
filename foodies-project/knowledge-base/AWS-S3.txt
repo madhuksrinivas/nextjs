@@ -1,0 +1,127 @@
+AWS S3 — FOODIES PROJECT
+=========================
+
+S3 (Simple Storage Service) is used in this project to store user-uploaded meal images
+in the cloud instead of on the local filesystem. This makes images persistent across
+deployments and accessible from any server or CDN.
+
+
+WHY S3 INSTEAD OF LOCAL FILESYSTEM?
+-------------------------------------
+Storing images locally (public/images/) only works on the same machine. When deployed
+to a cloud server or serverless environment (Vercel, AWS Lambda, etc.), the filesystem
+is read-only or ephemeral — files written to disk disappear on restart. S3 gives a
+permanent, scalable, publicly-accessible store for uploaded files.
+
+
+BUCKET DETAILS
+--------------
+Bucket name : foodies-project-users-image-624858524245-us-east-1-an
+Region      : us-east-1
+Base URL    : https://foodies-project-users-image-624858524245-us-east-1-an.s3.us-east-1.amazonaws.com
+
+Images are stored flat at the root of the bucket (no subdirectories).
+Each image key is: {meal-slug}.{extension}   e.g. rasam-rice.jpeg
+
+
+ENVIRONMENT VARIABLES (.env.local)
+------------------------------------
+All S3-related config lives in .env.local — never hardcoded in source files.
+
+  AWS_ACCESS_KEY_ID          IAM user access key (used by AWS SDK to authenticate)
+  AWS_SECRET_ACCESS_KEY      IAM user secret key (used by AWS SDK to authenticate)
+  AWS_S3_BUCKET_NAME         Bucket name used when uploading (server-only)
+  NEXT_PUBLIC_S3_BASE_URL    Full base URL used to build image src URLs (client + server)
+
+NEXT_PUBLIC_ prefix is required for NEXT_PUBLIC_S3_BASE_URL because it is read inside
+a client component (meal-item.js). Variables without that prefix are server-only and
+will be undefined in the browser.
+
+⚠️  .env.local is gitignored by default. Never commit it. Rotate keys if exposed.
+
+
+AWS SDK SETUP — lib/meals.js
+------------------------------
+The AWS SDK v3 client is instantiated once at module level:
+
+  import { S3 } from "@aws-sdk/client-s3";
+
+  const s3 = new S3({ region: "us-east-1" });
+
+The SDK automatically reads AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from
+environment variables — no manual credential passing needed.
+
+UPLOAD FLOW (saveMeal):
+  1. Slugify the meal title → used as the image filename key
+  2. Read the uploaded File as an ArrayBuffer, convert to Buffer
+  3. Call s3.putObject() to upload to the bucket:
+
+       await s3.putObject({
+         Bucket: process.env.AWS_S3_BUCKET_NAME,
+         Key: fileName,             // e.g. "rasam-rice.jpeg"
+         Body: Buffer.from(bufferedImage),
+         ContentType: meal.image.type,   // e.g. "image/jpeg"
+       });
+
+  4. Store only the filename (not the full URL) in the database:
+       meal.image = fileName;   // e.g. "rasam-rice.jpeg"
+
+  The full URL is reconstructed at render time using NEXT_PUBLIC_S3_BASE_URL.
+
+
+WHERE S3 IMAGES ARE DISPLAYED
+-------------------------------
+The stored filename is retrieved from MongoDB and the full URL is built at render time.
+
+1. components/meals/meal-item.js  (meals list page — each card)
+     src={`${process.env.NEXT_PUBLIC_S3_BASE_URL}/${image}`}
+
+2. app/meals/[mealSlug]/page.js   (individual meal detail page)
+     src={`${process.env.NEXT_PUBLIC_S3_BASE_URL}/${meal.image}`}
+
+
+NEXT.JS IMAGE COMPONENT CONFIG — next.config.js
+-------------------------------------------------
+Next.js's <Image> component blocks external image domains by default.
+The S3 hostname must be whitelisted in next.config.js:
+
+  images: {
+    remotePatterns: [
+      {
+        protocol: "https",
+        hostname: new URL(process.env.NEXT_PUBLIC_S3_BASE_URL).hostname,
+        port: "",
+        pathname: "/**",
+      },
+    ],
+  },
+
+The hostname is derived from NEXT_PUBLIC_S3_BASE_URL using new URL(...).hostname
+so it stays in sync with the env var automatically — no duplication.
+
+
+DATA FLOW SUMMARY
+-----------------
+  [User uploads image via form]
+          ↓
+  [Server Action: shareMeal in lib/action.js]
+          ↓
+  [saveMeal in lib/meals.js]
+          ↓ s3.putObject()
+  [S3 Bucket → stores rasam-rice.jpeg]
+            ↓ stores "rasam-rice.jpeg" in MongoDB
+          [meals collection → image field = "rasam-rice.jpeg"]
+          ↓ at render time
+  [NEXT_PUBLIC_S3_BASE_URL + "/" + "rasam-rice.jpeg"]
+          ↓
+  [<Image src="https://...s3...amazonaws.com/rasam-rice.jpeg" />]
+
+
+FILE REFERENCE MAP
+------------------
+  lib/meals.js                      S3 client setup + putObject upload
+  lib/action.js                     Calls saveMeal, triggers upload
+  components/meals/meal-item.js     Renders S3 image on meals list
+  app/meals/[mealSlug]/page.js      Renders S3 image on detail page
+  next.config.js                    Whitelists S3 hostname for <Image>
+  .env.local                        All credentials and config (gitignored)

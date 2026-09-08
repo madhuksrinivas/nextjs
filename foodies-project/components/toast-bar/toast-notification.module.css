@@ -1,0 +1,42 @@
+.toastContainer {
+  border: none;
+  padding: 0;
+  background: transparent;
+  position: fixed;
+  top: 1.5rem;
+  margin: 0 auto;
+  max-width: 50rem;
+}
+
+.toastContainer::backdrop {
+  background: transparent;
+}
+
+.toastNotification {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 1.5rem;
+  border-radius: 4px;
+  font-family: "Quicksand", sans-serif;
+  color: #ddd6cb;
+  background: #1c2027;
+  border: 1px solid #454952;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+}
+
+.toastNotification button {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+}
+
+.success {
+  border-color: #2fae5a;
+}
+
+.error {
+  border-color: #f9572a;
+}
